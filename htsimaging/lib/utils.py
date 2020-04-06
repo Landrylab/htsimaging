@@ -1,22 +1,14 @@
-import sys
-import os
-from os import makedirs
-from os.path import exists,splitext,basename
-from glob import glob
+from rohan.global_imports import *
 import pims
 # import nd2reader
-import pandas as pd
 import string
-import numpy as np
 from scipy import stats,ndimage
 from multiprocessing import Pool
-import cv2
 from skimage.segmentation import random_walker
 # from skimage.data import binary_blobs
 from skimage import io,exposure,restoration,filters,morphology,measure
 from scipy import ndimage as ndi
 import matplotlib.animation as animation
-import matplotlib.pyplot as plt
 from matplotlib import colors
 import subprocess
 
@@ -34,7 +26,20 @@ def filterframe(frame,cutoff=0):
     frame_cleand[frame_cleandi<cutoff]=0
     return frame_cleaned
 
-def filter_regions(regions,img=None,prop_type='area',mn=0,mx=0,check=False,plotp=None):
+def get_data_by_regions(regions,img=None,prop_type='area'):
+    if prop_type=='mean_intensity':
+        ValueError("arg img is required")
+    regions_props= measure.regionprops(regions.astype(int),intensity_image=img)
+    regions_lbls = np.array([prop.label for prop in regions_props])
+    if prop_type=='area':
+        regions_props_selected = np.array([getattr(prop,prop_type)  for prop in regions_props])
+    df1=pd.DataFrame({'labels':regions_lbls,
+                      prop_type:regions_props_selected,
+                     })
+    return df1
+
+def filter_regions(regions,img=None,prop_type='area',mn=0,mx=0,
+                   check=False,plotp=None):
     if prop_type=='mean_intensity':
         ValueError("arg img is required")
     regions_props= measure.regionprops(regions.astype(int),intensity_image=img)
@@ -72,6 +77,7 @@ def filter_regions(regions,img=None,prop_type='area',mn=0,mx=0,check=False,plotp
         ax.contour(regions_filtered, [0.5], linewidths=1.2, colors='g')
         plt.tight_layout()
         if not plotp is None:
+            makedirs(dirname(plotp),exist_ok=True)
             plt.savefig(plotp)
     return regions_filtered
 
@@ -180,3 +186,47 @@ def phasecorr(imlist,imlist2=None,clip=0): #cv  [rowini,rowend,colini,colend]
         return imlist_stb,imlist2_stb
     else:
         return imlist_stb
+
+## features
+def get_cellprops(regions,intensity_imgtype2img,properties=['area',
+    'bbox_area',
+    'convex_area',
+    'eccentricity',
+    'equivalent_diameter',
+    'euler_number',
+    'extent',
+    'filled_area',
+    'label',
+    'major_axis_length',
+    'max_intensity',
+    'mean_intensity',
+    'min_intensity',
+    'minor_axis_length',
+    'orientation',
+    'perimeter',
+    'solidity',
+    'centroid']):
+    from skimage.external import tifffile
+    dn2df={}
+    for imgtype in intensity_imgtype2img:
+        df=pd.DataFrame(measure.regionprops_table(regions.astype(int),
+                                           intensity_image=intensity_imgtype2img[imgtype],
+                                           properties=properties))
+        df.index=df.index+1
+        dn2df[imgtype]=dmap2lin(df,coln='property',idxn='cell #')
+    df=pd.concat(dn2df,axis=0,names=['image type']).droplevel(1)#.reset_index()
+    return df
+
+def get_signal_summary_by_roi(cellframes,xy_center=None,width=20,
+                       fun_summary_frame='min',fun_summary_frames='median'):
+    """
+    place of the roi in the image is defined by
+    :param xy_center:
+    :param width:    
+    """
+    width_half=int(width*0.5)
+    frame=cellframes[0]
+    if xy_center is None:
+        xy_center=[int(i/2) for i in cellframes[0].shape]
+    signal_cytoplasm=getattr(np,fun_summary_frames)([getattr(np,fun_summary_frame)(frame[xy_center[1]-width_half:xy_center[1]+width_half,xy_center[0]-width_half:xy_center[0]+width_half]) for frame in cellframes])
+    return int(signal_cytoplasm)
